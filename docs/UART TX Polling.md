@@ -1,0 +1,677 @@
+## Basic Idea/understanding required
+
+First we need to understand that we are working on the USART2 peripheral present in the APB1 bus.
+
+We will be operating in asynchronous mode, so it behaves like UART.
+
+We know the theoretical concept of UART, which is that it requires 2 lines. One for TX and one for RX.
+
+We need to find those lines, or in other words, we need to find the ports and pins which will help us make the UART connection successful.
+
+Alternate Function Registers will help us with this.
+
+So for that, in the STM32F411 datasheet, we refer to the Alternate Function Mapping table.
+
+From the table, we can understand that:
+
+- PA2 can be configured as USART2_TX using AF07.
+- PA3 can be configured as USART2_RX using AF07.
+
+Since this stage focuses on UART transmission, we will be using PA2 as the TX pin and configure it with Alternate Function 07 (AF07) later when coding.
+
+---
+
+## 1. uart2_tx_init()
+
+### i. Enable clock access to GPIOA
+
+We know that for UART transmission we will be using PA2. Since PA2 belongs to Port A, we need to configure GPIOA.
+
+GPIOA is connected to the AHB1 bus. Before using any GPIOA registers, we must enable clock access to GPIOA.
+
+For this, we refer to the RCC AHB1 Peripheral Clock Enable Register (`RCC_AHB1ENR`).
+
+From the register diagram, we can see that bit 0 (`GPIOAEN`) is responsible for enabling the clock for GPIOA.
+
+Therefore, we create a macro:
+
+```c
+#define GPIOAEN (1U<<0)
+```
+
+Here, `GPIOAEN` represents the 0th bit of the register.
+
+To enable clock access to GPIOA, we set this bit using:
+
+```c
+RCC->AHB1ENR |= GPIOAEN;
+```
+
+This sets bit 0 (`GPIOAEN`) to 1 and enables the clock for GPIOA.
+
+After executing this line, the clock is supplied to GPIOA and we can safely access and configure the GPIOA registers.
+
+<img width="800" height="300" alt="image" src="https://github.com/user-attachments/assets/bf1b347a-7118-44c4-a5c9-589a989b3797" />
+
+### ii. Configure PA2 as Alternate Function Mode
+
+Next, we need to configure PA2 as Alternate Function Mode because USART2 needs control of this pin for transmission.
+
+From the GPIOx_MODER register, we can see that PA2 is controlled by bits 5 and 4.
+
+<img width="800" height="300" alt="image" src="https://github.com/user-attachments/assets/b1a39797-d679-4b4a-8660-97dd5b2d640a" />
+
+### iii. Configure PA2 as Alternate Function 07 (AF07)
+
+Next we need to set Port A pin 2 to alternate function type AF07.
+
+For this, we refer to the GPIO Alternate Function Low Register (GPIOx_AFRL). From the diagram, we can see that PA2 is controlled by bits 11:8 (AFRL2[3:0]).
+
+From the Alternate Function Mapping table, we know that USART2_TX corresponds to AF07.
+
+AF07 is represented as 0111.
+
+Therefore, we set bits 8, 9 and 10, and clear bit 11 to configure PA2 as AF07.
+
+<img width="800" height="300" alt="image" src="https://github.com/user-attachments/assets/3dfa43b4-af38-4469-976b-0fdeb3b65ec1" />
+
+---
+
+### **2. Configure USART2 Module**
+
+#### i. Enable clock access to USART2
+
+First, we need to enable clock access to the USART2 peripheral.
+
+We know that USART2 is connected to the APB1 bus.
+
+Therefore, we refer to the RCC APB1 Peripheral Clock Enable Register (RCC_APB1ENR).
+
+From the register diagram, we can see that bit 17 (USART2EN) is responsible for enabling the clock for USART2.
+
+<img width="800" height="300" alt="image" src="https://github.com/user-attachments/assets/ab1918bf-56cc-4881-9b67-4ff8fcfc8f71" />
+
+Therefore, we create a macro:
+
+```c
+#define UART2EN (1U<<17)
+```
+
+Here, UART2EN represents the 17th bit of the register.
+
+To enable clock access to USART2, we set this bit using:
+
+```c
+RCC->APB1ENR |= UART2EN;
+```
+
+#### ii. Configure Baud Rate
+
+Now we need to configure the baud rate.
+
+This will be done with the help of the function:
+
+```c
+uart_set_baudrate(USART2, APB1_CLK, UART_BAUDRATE);
+```
+
+We pass 3 arguments here.
+
+- The first argument is USART2, which is a pointer to the USART2 peripheral register structure. We will use this pointer to access and configure USART2 module registers.
+- The second argument is APB1_CLK, which represents the clock frequency supplied to the USART2 peripheral.
+- The third argument is UART_BAUDRATE, which represents the desired baud rate for communication. In our project, this value is 115200.
+- The purpose of this function is to calculate the appropriate baud rate value and load it into the USART2 Baud Rate Register (BRR).
+
+#### iii. Configure Transfer Direction
+
+Finally, after enabling clock access and configuring the baud rate, we need to configure the transfer direction and enable the USART2 module.
+
+For transmission, the TE (Transmitter Enable) bit in the USART Control Register 1 (CR1) must be set.
+
+Therefore:
+
+```c
+USART2->CR1 = CR1_TE;
+```
+
+sets the TE bit and enables transmission.
+
+#### iv. Enable USART2 Module
+
+After that, the UE (USART Enable) bit must be set to enable the USART2 peripheral.
+
+```c
+USART2->CR1 |= CR1_UE;
+```
+
+This enables the USART2 module and makes it ready for communication.
+
+<img width="800" height="300" alt="image" src="https://github.com/user-attachments/assets/4c796139-15d6-4106-9060-f3b56d0964bc" />
+
+---
+
+## 2. static void uart_set_baudrate()
+
+```c
+static void uart_set_baudrate(USART_TypeDef *USARTx,
+                              uint32_t PeriphClk,
+                              uint32_t BaudRate)
+{
+    USARTx->BRR = compute_uart_bd(PeriphClk,BaudRate);
+}
+```
+
+### i. Function Arguments
+
+We pass 3 arguments here.
+
+- The first argument is USART2, which is a pointer to the USART2 peripheral register structure. We will use this pointer to access USART2 registers.
+- The second argument is the peripheral clock frequency supplied to USART2.
+- The third argument is the desired baud rate.
+
+### ii. Function Purpose
+
+The purpose of this function is to calculate the baud rate divider value using another helper function called `compute_uart_bd()`.
+
+The calculated value is then stored in the USART Baud Rate Register (BRR).
+
+The BRR register is responsible for configuring the UART communication speed. The USART hardware reads the value present in this register and generates the required baud rate internally.
+
+### iii. Baud Rate Calculation
+
+In our project:
+
+```c
+APB1_CLK      = 16000000
+UART_BAUDRATE = 115200
+```
+
+Therefore:
+
+```c
+compute_uart_bd(16000000,115200)
+```
+
+returns approximately:
+
+```text
+139
+```
+
+which is:
+
+```text
+0x008B
+```
+
+in hexadecimal.
+
+Therefore the line:
+
+```c
+USARTx->BRR = compute_uart_bd(PeriphClk,BaudRate);
+```
+
+becomes:
+
+```c
+USART2->BRR = 0x008B;
+```
+
+### iv. BRR Register Breakdown
+
+Since BRR is 32 bits, the CPU actually writes:
+
+```text
+31                                      16 15            8 7            0
++-----------------------------------------+---------------+--------------+
+| 0000 0000 0000 0000                     | 0000 0000     | 1000 1011    |
++-----------------------------------------+---------------+--------------+
+```
+
+Or bit-by-bit:
+
+```text
+Bit31................Bit16 = 0000 0000 0000 0000
+Bit15................Bit8  = 0000 0000
+Bit7.................Bit0  = 1000 1011
+```
+
+Now according to the BRR register layout:
+
+```text
+Bits 31:16  Reserved
+Bits 15:4   DIV_Mantissa[11:0]
+Bits 3:0    DIV_Fraction[3:0]
+```
+
+BRR contains:
+
+```text
+31........16 15........4      3....0
+0000....0000 0000 0000 1000  1011
+                 ↑             ↑
+            Mantissa=8    Fraction=11
+```
+
+So if someone asks:
+
+**What is stored in BRR after writing 0x008B?**
+
+You can answer:
+
+```text
+Reserved bits (31:16) = 0
+DIV_Mantissa (15:4)   = 8
+DIV_Fraction (3:0)    = 11
+```
+
+<img width="800" height="300" alt="image" src="https://github.com/user-attachments/assets/8380bffa-fdb9-4acd-8e4f-bbf911a9fbf7" />
+
+
+## 3. uint16_t compute_uart_bd
+
+```c
+static uint16_t compute_uart_bd(uint32_t PeriphClk, uint32_t BaudRate)
+{
+    return ((PeriphClk + (BaudRate/2U))/BaudRate);
+}
+```
+
+### i.
+
+We want UART to communicate at:
+
+```text
+115200 bits/sec
+```
+
+Our STM32 clock is:
+
+```text
+16000000 Hz (16 MHz)
+```
+
+Now think like this:
+
+```text
+Clock is running very fast
+↓
+16,000,000 ticks per second
+↓
+UART wants only 115,200 bits per second
+↓
+Need to slow down the clock
+```
+
+So UART needs a divider value.
+
+The actual divider is:
+
+```text
+16000000 / 115200
+= 138.88
+```
+
+Meaning:
+
+```text
+For roughly every 139 clock ticks,
+send one UART bit
+```
+
+Therefore, the BRR register stores this divider value.
+
+### ii.
+
+STM32 can represent this divider as:
+
+```text
+138.88
+↓
+138 (Mantissa)
+0.88 (Fraction)
+```
+
+In our project, the divider is rounded and written directly.
+
+```text
+138.88
+↓
+139
+```
+
+### iii.
+
+The formula used is:
+
+```c
+(PeriphClk + (BaudRate/2U))/BaudRate
+```
+
+This is a common C technique used to round the result to the nearest integer.
+
+Example:
+
+```text
+16000000 / 115200
+= 138.88
+```
+
+Normal integer division would give:
+
+```text
+138
+```
+
+because the decimal part is discarded.
+
+To obtain the nearest integer, half of the divisor is added before division:
+
+```text
+(16000000 + 57600)/115200
+= 139
+```
+
+### iv.
+
+Therefore, this function returns:
+
+```text
+139
+```
+
+which is later written into the BRR register and used by the USART hardware to generate the required baud rate.
+
+---
+
+## 4. main() Function
+
+### i.
+
+First, let's understand the header files used.
+
+```c
+#include <stdio.h>
+```
+
+This header file provides standard input/output functions such as `printf()`.
+
+```c
+#include <stdint.h>
+```
+
+This header file provides fixed-width data types such as `uint32_t`, `uint16_t`, etc.
+
+```c
+#include "stm32f4xx.h"
+```
+
+This is the CMSIS header file. It contains peripheral register structures, peripheral base addresses, interrupt definitions and macros such as `USART2`, `GPIOA`, `RCC`, etc.
+
+```c
+#include "uart.h"
+```
+
+This is our own header file. It contains the UART function declarations and macros required by the driver.
+
+### ii.
+
+Inside the `main()` function:
+
+```c
+uart2_tx_init();
+```
+
+We call the UART initialization function.
+
+This function performs all the required UART configuration such as GPIO configuration, USART2 configuration, baud rate configuration, enabling the transmitter and enabling the USART2 module.
+
+After this function call, UART transmission is ready.
+
+### iii.
+
+Next:
+
+```c
+while(1)
+{
+    printf("Hello from STM32F4........\n\r");
+}
+```
+
+We want to continuously transmit the message:
+
+```text
+Hello from STM32F4........
+```
+
+Therefore, we use the `printf()` function inside an infinite loop.
+
+When `printf()` is executed, it processes the string one character at a time. However, `printf()` does not know where the output should be sent.
+
+Therefore, the output is redirected to the following function present in `uart.c`:
+
+```c
+int __io_putchar(int ch)
+{
+    uart2_write(ch);
+    return ch;
+}
+```
+
+Whenever `printf()` wants to print a character, it calls `__io_putchar()` and passes one character at a time.
+
+### iv.
+
+It doesn't happen magically.
+
+When you write:
+
+```c
+printf("Hello");
+```
+
+the `printf()` function from `stdio.h` processes the string character by character:
+
+```text
+H
+e
+l
+l
+o
+```
+
+Now `printf()` itself does not know:
+
+```text
+Should I print to UART?
+Should I print to LCD?
+Should I print to terminal?
+```
+
+So internally, the library eventually calls a low-level output function.
+
+In STM32 projects, many toolchains (CubeIDE/newlib) allow you to provide:
+
+```c
+int __io_putchar(int ch)
+{
+    uart2_write(ch);
+    return ch;
+}
+```
+
+When the library needs to output a character, it looks for this function and calls it.
+
+Conceptually:
+
+```text
+printf("Hi");
+   ↓
+__io_putchar('H')
+   ↓
+uart2_write('H')
+
+printf()
+   ↓
+__io_putchar('i')
+   ↓
+uart2_write('i')
+```
+
+This is called retargeting `printf`.
+
+### v.
+
+Your next doubt will probably be:
+
+```text
+Where is __io_putchar() declared? I never saw it in stdio.h.
+```
+
+Answer:
+
+- It is usually not declared by you.
+- The library expects a function with exactly that name.
+- You provide the implementation.
+
+---
+
+## 5. void uart2_write(int ch)
+
+```c
+void uart2_write(int ch)
+{
+    /*Make sure the transmit data register is empty*/
+    while(!(USART2->SR & SR_TXE)){}
+
+    /*Write to transmit data register*/
+    USART2->DR = (ch & 0xFF);
+}
+```
+
+### i.
+
+Whenever an argument is passed to this function, in our case a character from `printf()`, that character must be written into the USART Data Register (DR).
+
+However, before writing new data, we must ensure that the Data Register is empty and ready to accept another character.
+
+### ii.
+
+For this purpose, we check the TXE (Transmit Data Register Empty) bit present in the USART Status Register (SR).
+
+```c
+while(!(USART2->SR & SR_TXE)){}
+```
+
+Here:
+
+```c
+USART2->SR
+```
+
+accesses the Status Register.
+
+`SR_TXE`
+
+is a mask corresponding to bit 7 (TXE).
+
+According to the reference manual:
+
+```text
+TXE = 0 → Data Register still contains data
+TXE = 1 → Data Register is empty
+```
+
+### iii.
+
+When a character is written into the Data Register, the USART hardware moves that character from the Data Register (DR) into the internal Shift Register for transmission.
+
+Once the transfer from Data Register to Shift Register is complete, the hardware automatically sets the TXE bit.
+
+Therefore:
+
+```text
+TXE = 1
+↓
+Data Register is empty
+↓
+Safe to write next character
+```
+
+The while loop continuously checks the TXE bit until it becomes 1.
+
+This technique is called polling, because the CPU repeatedly checks the status flag instead of being notified through an interrupt.
+
+### iv.
+
+Note that we are not waiting for RXNE here.
+
+```text
+RXNE → Receive Data Register Not Empty
+```
+
+is used during reception.
+
+For transmission, we wait for:
+
+```text
+TXE → Transmit Data Register Empty
+```
+
+### v.
+
+After the TXE bit becomes 1, the following line executes:
+
+```c
+USART2->DR = (ch & 0xFF);
+```
+
+Here, only the lower 8 bits of the character are taken:
+
+```c
+ch & 0xFF
+```
+
+because UART transmission is performed one byte (8 bits) at a time.
+
+For example:
+
+```text
+Character = 'A'
+ASCII value = 65
+Hex value = 0x41
+```
+
+Therefore:
+
+```c
+USART2->DR = 0x41;
+```
+
+The character is written into the Data Register.
+
+### vi.
+
+After that:
+
+```text
+Data Register (DR)
+         ↓
+Shift Register
+         ↓
+TX Pin (PA2)
+         ↓
+Serial Terminal
+```
+
+The USART hardware automatically converts the data into a UART frame (Start Bit + Data Bits + Stop Bit) and transmits it through the TX pin.
+
+### vii.
+
+This entire process repeats for every character passed from `printf()` until the complete string is transmitted.
+
+<img width="800" height="300" alt="image" src="https://github.com/user-attachments/assets/e5824e40-58a1-473c-bc74-118db9a24268" />
+
+<img width="800" height="300" alt="image" src="https://github.com/user-attachments/assets/4569d9e1-45bd-4b36-b02a-83ebdda90f46" />
